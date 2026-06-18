@@ -88,8 +88,30 @@ def get_item_or_404(db: Session, item_id: int) -> models.Item:
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok"}
+def health(db: Session = Depends(get_db)):
+    """Diagnóstico do serviço (livre de autenticação, usado pelo healthcheck).
+
+    Mostra qual banco está ativo, se a conexão funciona, se a auth está ligada,
+    a versão e a contagem de dados — útil para confirmar visualmente o estado.
+    """
+    # 'postgresql' | 'sqlite' -> nome amigável.
+    engine_name = "postgres" if engine.dialect.name == "postgresql" else engine.dialect.name
+    info = {
+        "status": "ok",
+        "version": app.version,
+        "auth": "enabled" if API_TOKEN else "disabled",
+        "db": {"engine": engine_name, "connected": False},
+    }
+    try:
+        info["db"]["counts"] = {
+            "semanas": db.query(models.Semana).count(),
+            "itens": db.query(models.Item).count(),
+        }
+        info["db"]["connected"] = True
+    except Exception as exc:  # banco inacessível: app de pé, mas degradado
+        info["status"] = "degraded"
+        info["db"]["error"] = type(exc).__name__
+    return info
 
 
 # ===================== ESTADO COMPLETO =====================
