@@ -59,3 +59,17 @@ class Item(Base):
 
     semana_id: Mapped[int] = mapped_column(ForeignKey("semanas.id"))
     semana: Mapped["Semana"] = relationship(back_populates="itens")
+
+
+class Projeto(Base):
+    """Um projeto de estudo com links para GitHub, deploys, etc."""
+
+    __tablename__ = "projetos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    titulo: Mapped[str] = mapped_column(String(300), default="")
+    descricao: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    links: Mapped[list] = mapped_column(JSON, default=list)  # [{label, url}]
+    ordem: Mapped[int] = mapped_column(Integer, default=0)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=_now)

@@ -109,6 +109,32 @@ def adicionar_item(
     return _request("POST", f"/api/semanas/{semana_id}/itens", payload)
 
 
+# ===================== PROJETOS =====================
+@mcp.tool()
+def adicionar_projeto(
+    titulo: str,
+    descricao: str = "",
+    tags: list[str] | None = None,
+    links: list[dict] | None = None,
+) -> dict:
+    """Registra um projeto de estudo com links para GitHub, deploy, etc.
+
+    Parâmetros:
+      titulo:   nome do repositório ou projeto, ex: "learning-by-doing".
+      descricao: resumo curto do que o projeto faz.
+      tags:     rótulos, ex: ["fastapi", "react", "mcp"].
+      links:    lista de {"label": "...", "url": "..."}.
+                Cole URLs do GitHub, Railway, Vercel, AWS — o site detecta o ícone.
+    """
+    payload = {
+        "title": titulo,
+        "description": descricao,
+        "tags": tags or [],
+        "links": links or [],
+    }
+    return _request("POST", "/api/projetos", payload)
+
+
 # ===================== ATUALIZAÇÃO =====================
 @mcp.tool()
 def atualizar_status_item(item_id: str, status: str) -> dict:
@@ -131,7 +157,7 @@ def listar_estado() -> dict:
 
 @mcp.tool()
 def resumo_estudos() -> dict:
-    """Panorama: total de semanas, itens, e quantos estão a fazer/andamento/concluídos."""
+    """Panorama: semanas, itens por status e total de projetos cadastrados."""
     estado = _request("GET", "/api/state")
     itens = [it for w in estado.get("weeks", []) for it in w["items"]]
     return {
@@ -140,6 +166,7 @@ def resumo_estudos() -> dict:
         "a_fazer": sum(1 for it in itens if it["status"] == "todo"),
         "em_andamento": sum(1 for it in itens if it["status"] == "doing"),
         "concluidos": sum(1 for it in itens if it["status"] == "done"),
+        "projetos": len(estado.get("projects", [])),
     }
 
 

@@ -73,6 +73,16 @@ def semana_dict(s: models.Semana) -> dict:
     return {"id": str(s.id), "title": s.titulo, "items": [item_dict(it) for it in s.itens]}
 
 
+def projeto_dict(p: models.Projeto) -> dict:
+    return {
+        "id": str(p.id),
+        "title": p.titulo,
+        "description": p.descricao or "",
+        "tags": p.tags or [],
+        "links": p.links or [],
+    }
+
+
 def get_semana_or_404(db: Session, semana_id: int) -> models.Semana:
     obj = db.get(models.Semana, semana_id)
     if not obj:
@@ -106,6 +116,7 @@ def health(db: Session = Depends(get_db)):
         info["db"]["counts"] = {
             "semanas": db.query(models.Semana).count(),
             "itens": db.query(models.Item).count(),
+            "projetos": db.query(models.Projeto).count(),
         }
         info["db"]["connected"] = True
     except Exception as exc:  # banco inacessível: app de pé, mas degradado
@@ -117,11 +128,17 @@ def health(db: Session = Depends(get_db)):
 # ===================== ESTADO COMPLETO =====================
 @app.get("/api/state")
 def get_state(db: Session = Depends(get_db)):
-    """Devolve {weeks: [...]} — usado pelo site no carregamento inicial."""
+    """Devolve {weeks: [...], projects: [...]} — carregamento inicial do site."""
     semanas = db.scalars(
         select(models.Semana).order_by(models.Semana.ordem, models.Semana.id)
     ).all()
-    return {"weeks": [semana_dict(s) for s in semanas]}
+    projetos = db.scalars(
+        select(models.Projeto).order_by(models.Projeto.ordem, models.Projeto.id)
+    ).all()
+    return {
+        "weeks": [semana_dict(s) for s in semanas],
+        "projects": [projeto_dict(p) for p in projetos],
+    }
 
 
 # ===================== SEMANAS =====================
@@ -199,6 +216,59 @@ def atualizar_item(item_id: int, payload: schemas.ItemUpdate, db: Session = Depe
 @app.delete("/api/itens/{item_id}", status_code=204)
 def remover_item(item_id: int, db: Session = Depends(get_db)):
     obj = get_item_or_404(db, item_id)
+    db.delete(obj)
+    db.commit()
+
+
+# ===================== PROJETOS =====================
+@app.get("/api/projetos")
+def listar_projetos(db: Session = Depends(get_db)):
+    projetos = db.scalars(
+        select(models.Projeto).order_by(models.Projeto.ordem, models.Projeto.id)
+    ).all()
+    return [projeto_dict(p) for p in projetos]
+
+
+@app.post("/api/projetos", status_code=201)
+def criar_projeto(payload: schemas.ProjetoCreate, db: Session = Depends(get_db)):
+    ordem = db.query(models.Projeto).count()
+    obj = models.Projeto(
+        titulo=payload.title,
+        descricao=payload.description,
+        tags=payload.tags,
+        links=[l.model_dump() for l in payload.links],
+        ordem=ordem,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return projeto_dict(obj)
+
+
+@app.patch("/api/projetos/{projeto_id}")
+def atualizar_projeto(projeto_id: int, payload: schemas.ProjetoUpdate, db: Session = Depends(get_db)):
+    obj = db.get(models.Projeto, projeto_id)
+    if not obj:
+        raise HTTPException(404, "Projeto não encontrado")
+    data = payload.model_dump(exclude_unset=True)
+    if "title" in data:
+        obj.titulo = data["title"]
+    if "description" in data:
+        obj.descricao = data["description"]
+    if "tags" in data:
+        obj.tags = data["tags"]
+    if "links" in data:
+        obj.links = [l.model_dump() for l in payload.links]
+    db.commit()
+    db.refresh(obj)
+    return projeto_dict(obj)
+
+
+@app.delete("/api/projetos/{projeto_id}", status_code=204)
+def remover_projeto(projeto_id: int, db: Session = Depends(get_db)):
+    obj = db.get(models.Projeto, projeto_id)
+    if not obj:
+        raise HTTPException(404, "Projeto não encontrado")
     db.delete(obj)
     db.commit()
 

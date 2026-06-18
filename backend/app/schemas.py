@@ -40,3 +40,17 @@ class ItemUpdate(BaseModel):
     links: list[LinkDoc] | None = None
     docs: list[LinkDoc] | None = None
     notes: str | None = None
+
+
+class ProjetoCreate(BaseModel):
+    title: str = "Novo projeto"
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    links: list[LinkDoc] = Field(default_factory=list)
+
+
+class ProjetoUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    links: list[LinkDoc] | None = None
