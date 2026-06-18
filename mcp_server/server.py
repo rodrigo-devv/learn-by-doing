@@ -13,6 +13,7 @@ Fluxo típico:
 As ferramentas só chamam a API REST (única fonte da verdade), então site e
 chatbot ficam sempre em sincronia.
 """
+import json
 import os
 import sys
 
@@ -169,26 +170,65 @@ def _achar_item_id(titulo: str | None) -> str | None:
 @mcp.tool()
 def gerar_atividade(
     titulo: str,
-    enunciado: str,
+    questoes: list[dict],
     item: str | None = None,
     assuntos: list[str] | None = None,
 ) -> dict:
-    """Cria uma atividade/exercício sobre assuntos que o usuário já estudou.
+    """Cria uma atividade com múltiplas questões de tipos variados.
 
-    Use depois que o usuário concluir um item e pedir uma atividade. VOCÊ (agente)
-    escreve o `enunciado` com as perguntas/exercícios; o usuário responde no site
-    (campo de respostas) e depois pede para você corrigir com `corrigir_atividade`.
+    Use depois que o usuário concluir um item e pedir uma atividade. Cada questão
+    aparece num card interativo no site — o usuário navega questão por questão e
+    responde com o input adequado ao tipo. Depois peça para corrigir com
+    `corrigir_atividade`.
 
     Parâmetros:
-      titulo:    nome curto, ex: "Atividade: Fundamentos de Python".
-      enunciado: o exercício completo (perguntas numeradas, em markdown).
-      item:      título do item de estudo de origem. Se informado e existir, a
-                 atividade fica vinculada e a nota aparece como selo no card dele.
-      assuntos:  tópicos cobertos, ex: ["print", "variáveis", "operações"].
+      titulo:   nome curto, ex: "Atividade: Fundamentos de Python".
+      questoes: lista de questões. Cada uma é um dict com:
+        tipo        (obrigatório) — "codigo" | "multipla_escolha" | "escolha_cards" | "dissertativa"
+        texto       (obrigatório) — o enunciado da questão
+        hint        (opcional)   — dica ou instrução adicional mostrada abaixo da pergunta
+        linguagem   (opcional)   — "python" | "javascript" | "typescript" | "java" | "cpp"
+                                   (use em questões de código — mostra emoji e extensão)
+        dificuldade (opcional)   — "Fácil" | "Média" | "Difícil"
+        opcoes      (obrigatório para multipla_escolha e escolha_cards) — lista de:
+                    {"label": "A", "texto": "...", "codigo": "..."}
+                    use "texto" para texto simples, "codigo" para blocos de código
+
+    Exemplos de questões:
+
+      Código Python:
+        {"tipo": "codigo", "linguagem": "python", "dificuldade": "Fácil",
+         "texto": "Como você imprime 'Olá, mundo!'?",
+         "hint": "Use a função print() com a string entre aspas."}
+
+      Múltipla escolha:
+        {"tipo": "multipla_escolha", "dificuldade": "Média",
+         "texto": "Qual é a f-string correta em Python?",
+         "opcoes": [
+           {"label": "A", "texto": "print(f'Olá, {nome}')"},
+           {"label": "B", "texto": "f'Olá, {nome}'"},
+           {"label": "C", "texto": "'Olá, ' + {nome}"}
+         ]}
+
+      Escolha entre blocos de código (cards visuais):
+        {"tipo": "escolha_cards", "linguagem": "python",
+         "texto": "Qual trecho lê o nome e exibe a saudação correta?",
+         "opcoes": [
+           {"label": "A", "codigo": "nome = input()\\nprint(nome)"},
+           {"label": "B", "codigo": "nome = input('Nome: ')\\nprint(f'Olá, {nome}!')"}
+         ]}
+
+      Dissertativa (texto livre com Markdown):
+        {"tipo": "dissertativa", "dificuldade": "Difícil",
+         "texto": "Explique a diferença entre variáveis e constantes em Python.",
+         "hint": "Escreva com pelo menos 2 exemplos de código."}
+
+      item:     título do item de estudo de origem (vincula a nota ao card do item).
+      assuntos: tópicos cobertos, ex: ["print", "variáveis", "f-strings"].
     """
     payload = {
         "title": titulo,
-        "prompt": enunciado,
+        "prompt": json.dumps(questoes, ensure_ascii=False),
         "status": "pendente",
         "topics": assuntos or [],
         "item_id": _achar_item_id(item),
@@ -236,10 +276,25 @@ def listar_estado() -> dict:
 
 
 @mcp.tool()
+def listar_projetos() -> dict:
+    """Lista todos os projetos cadastrados (id, título, descrição, tags, links).
+
+    Use para ver projetos existentes antes de adicionar um novo ou para
+    mostrar ao usuário o que já foi registrado.
+    """
+    return {"projects": _request("GET", "/api/projetos")}
+
+
+@mcp.tool()
 def resumo_estudos() -> dict:
-    """Panorama: semanas, itens por status e total de projetos cadastrados."""
+    """Panorama geral: semanas, itens por status, projetos e atividades.
+
+    Use como primeiro passo em qualquer sessão de estudo para ter contexto
+    antes de sugerir o que fazer a seguir.
+    """
     estado = _request("GET", "/api/state")
     itens = [it for w in estado.get("weeks", []) for it in w["items"]]
+    atividades = estado.get("activities", [])
     return {
         "semanas": len(estado.get("weeks", [])),
         "itens": len(itens),
@@ -247,6 +302,9 @@ def resumo_estudos() -> dict:
         "em_andamento": sum(1 for it in itens if it["status"] == "doing"),
         "concluidos": sum(1 for it in itens if it["status"] == "done"),
         "projetos": len(estado.get("projects", [])),
+        "atividades": len(atividades),
+        "atividades_pendentes": sum(1 for a in atividades if a["status"] == "pendente"),
+        "atividades_corrigidas": sum(1 for a in atividades if a["status"] == "corrigida"),
     }
 
 
