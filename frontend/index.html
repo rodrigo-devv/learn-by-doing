@@ -528,8 +528,8 @@ class App extends React.Component {
             </nav>
             <div style={{ flex: 1 }} />
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button className="ak-btn-sec" onClick={() => this.toggleTheme()} title={dark ? "Tema claro" : "Tema escuro"} style={{ width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--border-strong,#1e3050)", color: "var(--muted,#587090)", borderRadius: 8, fontSize: 14, cursor: "pointer" }}>{dark ? "☀" : "☾"}</button>
               <button className="ak-btn" onClick={() => this.openAdd()} style={{ display: "flex", alignItems: "center", gap: 7, background: ACCENT, color: "#030810", border: "none", padding: "9px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: ".1em", textTransform: "uppercase" }}>+ novo item</button>
+              <button className="ak-btn-sec" onClick={() => this.toggleTheme()} title={dark ? "Tema claro" : "Tema escuro"} style={{ width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid var(--border-strong,#1e3050)", color: "var(--muted,#587090)", borderRadius: 8, fontSize: 14, cursor: "pointer" }}>{dark ? "☀" : "☾"}</button>
             </div>
           </div>
         </header>

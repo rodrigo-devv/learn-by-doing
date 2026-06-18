@@ -14,9 +14,16 @@ As ferramentas só chamam a API REST (única fonte da verdade), então site e
 chatbot ficam sempre em sincronia.
 """
 import os
+import sys
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+# Windows usa cp1252 por padrão; forçar UTF-8 evita mojibake em títulos PT.
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 API_BASE = os.environ.get("AKADEMIA_API_BASE", "http://127.0.0.1:8000")
 # Mesmo token configurado no backend (AKADEMIA_TOKEN). Vazio = sem auth (local).
