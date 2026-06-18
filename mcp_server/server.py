@@ -145,12 +145,12 @@ def adicionar_projeto(
 
 # ===================== ATUALIZAÇÃO =====================
 @mcp.tool()
-def atualizar_status_item(item_id: str, status: str) -> dict:
+def atualizar_status_item(item_id: str | int, status: str) -> dict:
     """Muda o status de um item: 'todo', 'doing' ou 'done'.
 
-    Use `listar_estado` para descobrir o `item_id`.
+    Use `listar_estado` para descobrir o `item_id`. Aceita id como "12" ou 12.
     """
-    return _request("PATCH", f"/api/itens/{item_id}", {"status": status})
+    return _request("PATCH", f"/api/itens/{str(item_id)}", {"status": status})
 
 
 # ===================== ATIVIDADES =====================
@@ -237,7 +237,7 @@ def gerar_atividade(
 
 
 @mcp.tool()
-def corrigir_atividade(atividade_id: str, nota: str, feedback: str) -> dict:
+def corrigir_atividade(atividade_id: str | int, nota: str | int | float, feedback: str) -> dict:
     """Corrige uma atividade respondida: registra a nota e o feedback.
 
     Marca a atividade como 'corrigida'. A `nota` vira um selo no card do item
@@ -245,14 +245,16 @@ def corrigir_atividade(atividade_id: str, nota: str, feedback: str) -> dict:
     respostas do usuário (campo `answers`) antes de corrigir.
 
     Parâmetros:
-      atividade_id: id da atividade (de `listar_atividades`).
-      nota:         a nota, ex: "8.5", "9/10" ou "A".
+      atividade_id: id da atividade (de `listar_atividades`). Aceita "2" ou 2.
+      nota:         a nota, ex: "8.5", "9/10" ou "A". Aceita texto ou número.
       feedback:     comentários da correção (o que acertou, o que revisar).
     """
+    # O gateway MCP pode entregar ids/notas numéricos como int/float; normaliza
+    # para string para casar com a API (que trata id e grade como texto).
     return _request(
         "PATCH",
-        f"/api/atividades/{atividade_id}",
-        {"grade": nota, "feedback": feedback, "status": "corrigida"},
+        f"/api/atividades/{str(atividade_id)}",
+        {"grade": str(nota), "feedback": feedback, "status": "corrigida"},
     )
 
 

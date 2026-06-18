@@ -20,6 +20,8 @@
   @keyframes akFadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   @keyframes akPulse{0%,100%{opacity:1;}50%{opacity:.4;}}
   @keyframes akRingIn{from{stroke-dashoffset:352;}to{stroke-dashoffset:var(--ring-offset,352);}}
+  @keyframes akPop{0%{transform:scale(.7);opacity:0;}60%{transform:scale(1.06);}100%{transform:scale(1);opacity:1;}}
+  @keyframes akCheck{from{stroke-dashoffset:48;}to{stroke-dashoffset:0;}}
 
   #loading{min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--faint,#3d5070);font-size:12px;letter-spacing:.16em;text-transform:uppercase;}
 
@@ -42,6 +44,10 @@
 
   /* "doing" dot pulse */
   .ak-pulse{animation:akPulse 2.6s ease-in-out infinite;}
+
+  /* pop-in (banner de entrega) */
+  .ak-pop{animation:akPop .42s cubic-bezier(.34,1.56,.64,1) both;}
+  .ak-check{stroke-dasharray:48;stroke-dashoffset:48;animation:akCheck .5s .12s ease forwards;}
 
   /* primary button hover */
   .ak-btn{transition:box-shadow .18s ease,transform .18s ease;}
@@ -237,6 +243,87 @@ function TuiNum({ text, duration = 680 }) {
     return () => cancelAnimationFrame(raf);
   }, [target]);
   return <span style={{ fontVariantNumeric: "tabular-nums", letterSpacing: ".02em" }}>{out}</span>;
+}
+
+// ============ realce de sintaxe (Python / SQL) ============
+const CODE_COLORS = { kw: "#dda0dd", str: "#98c379", num: "#61dafb", com: "#5a6680", fn: "#61afef", txt: "#c8cad8" };
+const PY_KW = new Set("def class return if elif else for while break continue in import from as with try except finally raise lambda None True False and or not is pass global nonlocal yield assert del async await match case".split(" "));
+const PY_BUILTIN = new Set("print len range input int str float list dict set tuple bool open type sum min max abs map filter zip enumerate sorted reversed isinstance super self".split(" "));
+const SQL_KW = new Set("select from where insert update delete into values create table drop alter add column join inner left right outer full on group by order having limit offset distinct as and or not null is in between like exists union all set primary key foreign references default index view case when then end count sum avg min max desc asc".split(" "));
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Tokeniza em uma passada (comentário | string | número | palavra | outro),
+// então strings/comentários nunca são coloridos por dentro.
+function highlightCode(code, lang) {
+  const isSql = lang === "sql";
+  const re = isSql
+    ? /(--[^\n]*)|('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_]\w*)|([\s\S])/g
+    : /(#[^\n]*)|('''[\s\S]*?'''|"""[\s\S]*?"""|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_]\w*)|([\s\S])/g;
+  const span = (c, t) => `<span style="color:${c}">${escapeHtml(t)}</span>`;
+  let out = "", m;
+  while ((m = re.exec(code))) {
+    if (m[1]) out += span(CODE_COLORS.com, m[1]);
+    else if (m[2]) out += span(CODE_COLORS.str, m[2]);
+    else if (m[3]) out += span(CODE_COLORS.num, m[3]);
+    else if (m[4]) {
+      const w = m[4], lw = w.toLowerCase();
+      if (isSql) out += SQL_KW.has(lw) ? span(CODE_COLORS.kw, w) : escapeHtml(w);
+      else if (PY_KW.has(w)) out += span(CODE_COLORS.kw, w);
+      else if (PY_BUILTIN.has(w)) out += span(CODE_COLORS.fn, w);
+      else out += escapeHtml(w);
+    } else out += escapeHtml(m[5]);
+    if (re.lastIndex === m.index) re.lastIndex++;
+  }
+  return out;
+}
+
+// ============ CodeEditor — textarea transparente sobre <pre> colorido ============
+function CodeEditor({ value, onChange, onBlur, onKeyDown, language, placeholder, minLines = 12 }) {
+  const taRef = useRef(null);
+  const preRef = useRef(null);
+  const v = value || "";
+  const lines = v.split("\n");
+  const numLines = Math.max(lines.length, minLines);
+  const lang = language === "sql" ? "sql" : "python";
+  // espaço extra no fim garante que a última linha (vazia) seja renderizada
+  const html = highlightCode(v, lang) + "\n ";
+
+  const sync = () => {
+    if (preRef.current && taRef.current) {
+      preRef.current.scrollTop = taRef.current.scrollTop;
+      preRef.current.scrollLeft = taRef.current.scrollLeft;
+    }
+  };
+
+  const txt = { margin: 0, fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, lineHeight: "20px", padding: "12px 16px", whiteSpace: "pre", tabSize: 4, border: 0, boxSizing: "border-box", letterSpacing: 0 };
+
+  return (
+    <div style={{ display: "flex", minHeight: numLines * 20 + 24 }}>
+      {/* gutter de números (1 linha lógica = 1 linha visual, pois usamos pre/scroll) */}
+      <div style={{ background: "#0a0e18", borderRight: "1px solid #1e2330", padding: "12px 10px", textAlign: "right", userSelect: "none", minWidth: 42, flexShrink: 0 }}>
+        {Array.from({ length: numLines }).map((_, i) => (
+          <div key={i} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: i < lines.length ? "#3a4660" : "#161a24", lineHeight: "20px" }}>{i + 1}</div>
+        ))}
+      </div>
+      <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+        <pre ref={preRef} aria-hidden="true" style={{ ...txt, position: "absolute", inset: 0, overflow: "auto", color: CODE_COLORS.txt, pointerEvents: "none" }} dangerouslySetInnerHTML={{ __html: html }} />
+        <textarea
+          ref={taRef}
+          value={v}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={(e) => onBlur && onBlur(e.target.value)}
+          onKeyDown={onKeyDown}
+          onScroll={sync}
+          spellCheck={false}
+          placeholder={placeholder}
+          style={{ ...txt, position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "auto", background: "transparent", color: "transparent", caretColor: "#00bcd4", resize: "none", outline: "none" }}
+        />
+      </div>
+    </div>
+  );
 }
 
 // ============ App ============
@@ -1114,13 +1201,12 @@ class App extends React.Component {
                 requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
               }
             };
-            const codeLines = (curAnswer || "").split("\n");
-            const numLines = Math.max(codeLines.length, 4);
-            const langExt = { python: "py", javascript: "js", typescript: "ts", java: "java", cpp: "cpp", c: "c" };
-            const langEmoji = { python: "🐍", javascript: "🟡", typescript: "🔷", java: "☕", cpp: "⚙️" };
+            const langExt = { python: "py", javascript: "js", typescript: "ts", java: "java", cpp: "cpp", c: "c", sql: "sql" };
+            const langEmoji = { python: "🐍", javascript: "🟡", typescript: "🔷", java: "☕", cpp: "⚙️", sql: "🗄️" };
+            const submitted = act.status === "entregue" || act.status === "corrigida";
 
             return (
-              <div className="ak-fade" style={{ maxWidth: 660 }}>
+              <div className="ak-fade" style={{ width: "100%" }}>
                 {/* breadcrumb */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, letterSpacing: "1px", marginBottom: 18 }}>
                   <button onClick={() => this.go("activities")} style={{ background: "none", border: "none", color: "var(--muted,#587090)", fontSize: 10, cursor: "pointer", padding: 0, letterSpacing: "1px", textTransform: "uppercase" }}>← Atividades</button>
@@ -1168,24 +1254,17 @@ class App extends React.Component {
                         <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#28c840" }} />
                       </div>
                       <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#3a3e48", marginLeft: 6 }}>{"solution." + (langExt[q.linguagem] || "txt")}</span>
-                      <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#2a2e38" }}>Tab → indenta</span>
+                      <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#2a2e38" }}>Tab → indenta · realce {(q.linguagem === "sql" ? "SQL" : "Python")}</span>
                     </div>
-                    <div style={{ display: "flex" }}>
-                      <div style={{ background: "#0a0e18", borderRight: "1px solid #1e2330", padding: "10px 8px", textAlign: "right", userSelect: "none", minWidth: 36 }}>
-                        {Array.from({ length: numLines }).map((_, i) => (
-                          <div key={i} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: i < codeLines.length ? "#2a2e38" : "#161a24", lineHeight: "20px" }}>{i + 1}</div>
-                        ))}
-                      </div>
-                      <textarea
-                        value={curAnswer}
-                        onChange={(e) => saveAnswer(e.target.value)}
-                        onBlur={(e) => persistAnswer(e.target.value)}
-                        onKeyDown={handleCodeKey}
-                        spellCheck={false}
-                        placeholder={"# escreva seu " + (q.linguagem || "código") + " aqui"}
-                        style={{ flex: 1, border: "none", background: "transparent", outline: "none", padding: "10px 14px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#c8cad8", lineHeight: "20px", resize: "none", minHeight: numLines * 20 + 20 + "px", tabSize: 4 }}
-                      />
-                    </div>
+                    <CodeEditor
+                      value={curAnswer}
+                      onChange={saveAnswer}
+                      onBlur={persistAnswer}
+                      onKeyDown={handleCodeKey}
+                      language={q.linguagem}
+                      placeholder={"# escreva seu " + (q.linguagem || "código") + " aqui"}
+                      minLines={12}
+                    />
                   </div>
                 )}
 
@@ -1259,9 +1338,27 @@ class App extends React.Component {
                   </div>
                   {qi < total - 1
                     ? <button className="ak-btn" onClick={goNext} style={{ background: qColor, border: "none", borderRadius: 8, padding: "9px 18px", cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#0d1117", fontWeight: 600 }}>Próxima →</button>
-                    : <button className="ak-btn" onClick={() => this.submitActivityAnswers(act.id)} style={{ background: qColor, border: "none", borderRadius: 8, padding: "9px 18px", cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#0d1117", fontWeight: 600 }}>Entregar ✓</button>
+                    : submitted
+                      ? <button disabled style={{ background: "var(--surface-2,#0f1828)", border: "1px solid " + ACT_STATUS.entregue.color + "55", borderRadius: 8, padding: "9px 18px", cursor: "default", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: ACT_STATUS.entregue.color, fontWeight: 600 }}>Entregue ✓</button>
+                      : <button className="ak-btn" onClick={() => this.submitActivityAnswers(act.id)} style={{ background: qColor, border: "none", borderRadius: 8, padding: "9px 18px", cursor: "pointer", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#0d1117", fontWeight: 600 }}>Entregar ✓</button>
                   }
                 </div>
+
+                {/* banner de entrega: aparece após Entregar, com animação e botão de volta */}
+                {act.status === "entregue" && (
+                  <div className="ak-pop" style={{ marginTop: 18, background: ACT_STATUS.entregue.color + "12", border: "1px solid " + ACT_STATUS.entregue.color + "3a", borderRadius: 12, padding: "20px 22px", display: "flex", alignItems: "center", gap: 16 }}>
+                    <div style={{ width: 42, height: 42, borderRadius: "50%", background: ACT_STATUS.entregue.color + "1f", border: "1.5px solid " + ACT_STATUS.entregue.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={ACT_STATUS.entregue.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path className="ak-check" d="M20 6L9 17l-5-5" />
+                      </svg>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 20, fontWeight: 600, color: "var(--ink,#cddaef)" }}>Atividade entregue!</div>
+                      <div style={{ fontSize: 12, color: "var(--muted,#587090)", marginTop: 2 }}>Peça ao seu agente para corrigir — a nota aparecerá aqui.</div>
+                    </div>
+                    <button className="ak-btn" onClick={() => this.go("activities")} style={{ background: ACT_STATUS.entregue.color, color: "#030810", border: "none", padding: "10px 18px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: ".08em", textTransform: "uppercase", whiteSpace: "nowrap", flexShrink: 0 }}>Voltar às Atividades</button>
+                  </div>
+                )}
 
                 {/* correção (se já corrigida) */}
                 {(act.feedback || act.status === "corrigida") && (
