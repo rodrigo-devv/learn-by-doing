@@ -152,6 +152,79 @@ def atualizar_status_item(item_id: str, status: str) -> dict:
     return _request("PATCH", f"/api/itens/{item_id}", {"status": status})
 
 
+# ===================== ATIVIDADES =====================
+def _achar_item_id(titulo: str | None) -> str | None:
+    """Acha o id de um item pelo título (case-insensitive). None se não achar."""
+    if not titulo:
+        return None
+    alvo = titulo.strip().lower()
+    estado = _request("GET", "/api/state")
+    for w in estado.get("weeks", []):
+        for it in w.get("items", []):
+            if it.get("title", "").strip().lower() == alvo:
+                return it["id"]
+    return None
+
+
+@mcp.tool()
+def gerar_atividade(
+    titulo: str,
+    enunciado: str,
+    item: str | None = None,
+    assuntos: list[str] | None = None,
+) -> dict:
+    """Cria uma atividade/exercício sobre assuntos que o usuário já estudou.
+
+    Use depois que o usuário concluir um item e pedir uma atividade. VOCÊ (agente)
+    escreve o `enunciado` com as perguntas/exercícios; o usuário responde no site
+    (campo de respostas) e depois pede para você corrigir com `corrigir_atividade`.
+
+    Parâmetros:
+      titulo:    nome curto, ex: "Atividade: Fundamentos de Python".
+      enunciado: o exercício completo (perguntas numeradas, em markdown).
+      item:      título do item de estudo de origem. Se informado e existir, a
+                 atividade fica vinculada e a nota aparece como selo no card dele.
+      assuntos:  tópicos cobertos, ex: ["print", "variáveis", "operações"].
+    """
+    payload = {
+        "title": titulo,
+        "prompt": enunciado,
+        "status": "pendente",
+        "topics": assuntos or [],
+        "item_id": _achar_item_id(item),
+    }
+    return _request("POST", "/api/atividades", payload)
+
+
+@mcp.tool()
+def corrigir_atividade(atividade_id: str, nota: str, feedback: str) -> dict:
+    """Corrige uma atividade respondida: registra a nota e o feedback.
+
+    Marca a atividade como 'corrigida'. A `nota` vira um selo no card do item
+    vinculado e aparece na aba Atividades. Use `listar_atividades` para ver as
+    respostas do usuário (campo `answers`) antes de corrigir.
+
+    Parâmetros:
+      atividade_id: id da atividade (de `listar_atividades`).
+      nota:         a nota, ex: "8.5", "9/10" ou "A".
+      feedback:     comentários da correção (o que acertou, o que revisar).
+    """
+    return _request(
+        "PATCH",
+        f"/api/atividades/{atividade_id}",
+        {"grade": nota, "feedback": feedback, "status": "corrigida"},
+    )
+
+
+@mcp.tool()
+def listar_atividades() -> dict:
+    """Lista todas as atividades (enunciado, respostas, status, nota, feedback).
+
+    Use para descobrir ids, ler as respostas do usuário e ver o que falta corrigir.
+    """
+    return {"activities": _request("GET", "/api/atividades")}
+
+
 # ===================== LEITURA =====================
 @mcp.tool()
 def listar_estado() -> dict:

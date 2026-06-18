@@ -73,3 +73,33 @@ class Projeto(Base):
     links: Mapped[list] = mapped_column(JSON, default=list)  # [{label, url}]
     ordem: Mapped[int] = mapped_column(Integer, default=0)
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Atividade(Base):
+    """Uma atividade/exercício gerado pelo agente sobre assuntos já estudados.
+
+    Fluxo: o usuário conclui um item ('done'), pede ao agente uma atividade,
+    o agente gera o `enunciado`. O usuário responde (em `respostas`) e o agente
+    corrige, preenchendo `nota` e `feedback`. A nota vira um selo no card do item.
+
+    status: 'pendente' (gerada) | 'entregue' (respondida) | 'corrigida' (com nota).
+    assuntos: lista de tópicos cobertos, ex: ["print", "variáveis", "operações"].
+    item_id: item de estudo de origem (opcional) — liga a nota ao card.
+    """
+
+    __tablename__ = "atividades"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    titulo: Mapped[str] = mapped_column(String(300), default="")
+    enunciado: Mapped[str] = mapped_column(Text, default="")
+    respostas: Mapped[str] = mapped_column(Text, default="")
+    feedback: Mapped[str] = mapped_column(Text, default="")
+    nota: Mapped[str] = mapped_column(String(20), default="")
+    status: Mapped[str] = mapped_column(String(12), default="pendente")
+    assuntos: Mapped[list] = mapped_column(JSON, default=list)
+    ordem: Mapped[int] = mapped_column(Integer, default=0)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("itens.id", ondelete="SET NULL"), nullable=True
+    )

@@ -21,9 +21,24 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 from .database import Base, engine, get_db
 
+
+class UTF8JSONResponse(JSONResponse):
+    """JSON sempre com 'charset=utf-8' explícito no Content-Type.
+
+    O corpo já é UTF-8 (Starlette usa ensure_ascii=False), mas declarar o
+    charset evita qualquer cliente HTTP interpretar acentos como Latin-1.
+    """
+
+    media_type = "application/json; charset=utf-8"
+
+
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Akademía API", version="1.0.0")
+app = FastAPI(
+    title="Akademía API",
+    version="1.1.0",
+    default_response_class=UTF8JSONResponse,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,6 +98,20 @@ def projeto_dict(p: models.Projeto) -> dict:
     }
 
 
+def atividade_dict(a: models.Atividade) -> dict:
+    return {
+        "id": str(a.id),
+        "title": a.titulo,
+        "prompt": a.enunciado or "",
+        "answers": a.respostas or "",
+        "feedback": a.feedback or "",
+        "grade": a.nota or "",
+        "status": a.status,
+        "topics": a.assuntos or [],
+        "item_id": str(a.item_id) if a.item_id is not None else None,
+    }
+
+
 def get_semana_or_404(db: Session, semana_id: int) -> models.Semana:
     obj = db.get(models.Semana, semana_id)
     if not obj:
@@ -94,6 +123,13 @@ def get_item_or_404(db: Session, item_id: int) -> models.Item:
     obj = db.get(models.Item, item_id)
     if not obj:
         raise HTTPException(404, "Item não encontrado")
+    return obj
+
+
+def get_atividade_or_404(db: Session, atividade_id: int) -> models.Atividade:
+    obj = db.get(models.Atividade, atividade_id)
+    if not obj:
+        raise HTTPException(404, "Atividade não encontrada")
     return obj
 
 
@@ -117,6 +153,7 @@ def health(db: Session = Depends(get_db)):
             "semanas": db.query(models.Semana).count(),
             "itens": db.query(models.Item).count(),
             "projetos": db.query(models.Projeto).count(),
+            "atividades": db.query(models.Atividade).count(),
         }
         info["db"]["connected"] = True
     except Exception as exc:  # banco inacessível: app de pé, mas degradado
@@ -128,16 +165,20 @@ def health(db: Session = Depends(get_db)):
 # ===================== ESTADO COMPLETO =====================
 @app.get("/api/state")
 def get_state(db: Session = Depends(get_db)):
-    """Devolve {weeks: [...], projects: [...]} — carregamento inicial do site."""
+    """Devolve {weeks, projects, activities} — carregamento inicial do site."""
     semanas = db.scalars(
         select(models.Semana).order_by(models.Semana.ordem, models.Semana.id)
     ).all()
     projetos = db.scalars(
         select(models.Projeto).order_by(models.Projeto.ordem, models.Projeto.id)
     ).all()
+    atividades = db.scalars(
+        select(models.Atividade).order_by(models.Atividade.ordem, models.Atividade.id)
+    ).all()
     return {
         "weeks": [semana_dict(s) for s in semanas],
         "projects": [projeto_dict(p) for p in projetos],
+        "activities": [atividade_dict(a) for a in atividades],
     }
 
 
@@ -269,6 +310,85 @@ def remover_projeto(projeto_id: int, db: Session = Depends(get_db)):
     obj = db.get(models.Projeto, projeto_id)
     if not obj:
         raise HTTPException(404, "Projeto não encontrado")
+    db.delete(obj)
+    db.commit()
+
+
+# ===================== ATIVIDADES =====================
+def _parse_item_id(raw) -> int | None:
+    """Converte item_id vindo como string ('12') ou None para int|None."""
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/api/atividades")
+def listar_atividades(db: Session = Depends(get_db)):
+    atividades = db.scalars(
+        select(models.Atividade).order_by(models.Atividade.ordem, models.Atividade.id)
+    ).all()
+    return [atividade_dict(a) for a in atividades]
+
+
+@app.post("/api/atividades", status_code=201)
+def criar_atividade(payload: schemas.AtividadeCreate, db: Session = Depends(get_db)):
+    item_id = _parse_item_id(payload.item_id)
+    if item_id is not None:
+        get_item_or_404(db, item_id)  # valida o vínculo, se houver
+    ordem = db.query(models.Atividade).count()
+    obj = models.Atividade(
+        titulo=payload.title,
+        enunciado=payload.prompt,
+        respostas=payload.answers,
+        feedback=payload.feedback,
+        nota=payload.grade,
+        status=payload.status,
+        assuntos=payload.topics,
+        item_id=item_id,
+        ordem=ordem,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return atividade_dict(obj)
+
+
+@app.patch("/api/atividades/{atividade_id}")
+def atualizar_atividade(
+    atividade_id: int, payload: schemas.AtividadeUpdate, db: Session = Depends(get_db)
+):
+    obj = get_atividade_or_404(db, atividade_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "title" in data:
+        obj.titulo = data["title"]
+    if "prompt" in data:
+        obj.enunciado = data["prompt"]
+    if "answers" in data:
+        obj.respostas = data["answers"]
+    if "feedback" in data:
+        obj.feedback = data["feedback"]
+    if "grade" in data:
+        obj.nota = data["grade"]
+    if "status" in data:
+        obj.status = data["status"]
+    if "topics" in data:
+        obj.assuntos = data["topics"]
+    if "item_id" in data:
+        item_id = _parse_item_id(data["item_id"])
+        if item_id is not None:
+            get_item_or_404(db, item_id)
+        obj.item_id = item_id
+    db.commit()
+    db.refresh(obj)
+    return atividade_dict(obj)
+
+
+@app.delete("/api/atividades/{atividade_id}", status_code=204)
+def remover_atividade(atividade_id: int, db: Session = Depends(get_db)):
+    obj = get_atividade_or_404(db, atividade_id)
     db.delete(obj)
     db.commit()
 

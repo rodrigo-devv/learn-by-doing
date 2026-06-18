@@ -121,6 +121,13 @@ const THEME_VARS = {
 const ACCENT = "#00c8d8";
 const THEME_KEY = "akademia-theme";
 
+// status das atividades (cores funcionam nos dois temas)
+const ACT_STATUS = {
+  pendente:  { label: "pendente",  color: "#c88020" },
+  entregue:  { label: "entregue",  color: "#3a78c8" },
+  corrigida: { label: "corrigida", color: "#00a878" },
+};
+
 // ============ detecção de plataforma e ícones ============
 const PLATFORMS = {
   github:       { label: "GitHub",       abbr: null,   color: "#d0dcee", bg: "rgba(208,220,238,.1)"  },
@@ -239,10 +246,10 @@ class App extends React.Component {
     let theme = "dark";
     try { const t = localStorage.getItem(THEME_KEY); if (t === "dark" || t === "light") theme = t; } catch (e) {}
     this.state = {
-      weeks: [], projects: [], loading: true, error: null, needsToken: false, tokenInput: "",
-      view: "dashboard", selectedId: null, selectedProjectId: null,
+      weeks: [], projects: [], activities: [], loading: true, error: null, needsToken: false, tokenInput: "",
+      view: "dashboard", selectedId: null, selectedProjectId: null, selectedActivityId: null,
       showAdd: false, addTitle: "", addWeekId: null, newTag: "",
-      newProjectTag: "", theme,
+      newProjectTag: "", newActivityTopic: "", theme,
     };
   }
 
@@ -254,7 +261,7 @@ class App extends React.Component {
   async load() {
     try {
       const data = await api("GET", "/api/state");
-      this.setState({ weeks: data.weeks || [], projects: data.projects || [], loading: false, needsToken: false });
+      this.setState({ weeks: data.weeks || [], projects: data.projects || [], activities: data.activities || [], loading: false, needsToken: false });
     } catch (e) {
       if (e instanceof AuthError) {
         this.setState({ loading: false, needsToken: true });
@@ -435,7 +442,51 @@ class App extends React.Component {
     this.setState((s) => ({ projects: s.projects.filter((p) => p.id !== id), view: "projects", selectedProjectId: null }));
   }
 
-  go(view) { this.setState({ view, selectedId: null, selectedProjectId: null }); }
+  // ---- atividades ----
+  findActivity(id) { return this.state.activities.find((a) => a.id === id); }
+  updateActivityLocal(id, patch) {
+    this.setState((s) => ({ activities: s.activities.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
+  }
+  persistActivity(id, patch) { api("PATCH", `/api/atividades/${id}`, patch).catch(() => {}); }
+  onActivityField(id, field, value) { this.updateActivityLocal(id, { [field]: value }); }
+  blurActivityField(id, field) { const a = this.findActivity(id); if (a) this.persistActivity(id, { [field]: a[field] }); }
+
+  submitActivityAnswers(id) {
+    const a = this.findActivity(id); if (!a) return;
+    // não rebaixa o status de uma atividade já corrigida
+    const patch = { answers: a.answers, status: a.status === "corrigida" ? "corrigida" : "entregue" };
+    this.updateActivityLocal(id, patch);
+    this.persistActivity(id, patch);
+  }
+
+  addActivityTopic(id, val) {
+    const v = String(val || "").trim(); if (!v) return;
+    const a = this.findActivity(id); if (!a) return;
+    if (a.topics.includes(v)) { this.setState({ newActivityTopic: "" }); return; }
+    const topics = [...a.topics, v];
+    this.updateActivityLocal(id, { topics });
+    this.setState({ newActivityTopic: "" });
+    this.persistActivity(id, { topics });
+  }
+  removeActivityTopic(id, i) {
+    const a = this.findActivity(id); if (!a) return;
+    const topics = a.topics.filter((_, k) => k !== i);
+    this.updateActivityLocal(id, { topics });
+    this.persistActivity(id, { topics });
+  }
+
+  async createActivity() {
+    try {
+      const obj = await api("POST", "/api/atividades", { title: "Nova atividade" });
+      this.setState((s) => ({ activities: [...s.activities, obj], view: "activity-detail", selectedActivityId: obj.id }));
+    } catch (e) {}
+  }
+  async deleteActivity(id) {
+    try { await api("DELETE", `/api/atividades/${id}`); } catch (e) {}
+    this.setState((s) => ({ activities: s.activities.filter((a) => a.id !== id), view: "activities", selectedActivityId: null }));
+  }
+
+  go(view) { this.setState({ view, selectedId: null, selectedProjectId: null, selectedActivityId: null }); }
   open(id) { this.setState({ view: "detail", selectedId: id }); }
   openAdd() { this.setState((s) => ({ showAdd: true, addTitle: "", addWeekId: s.weeks[0] ? s.weeks[0].id : "__new" })); }
 
@@ -524,6 +575,7 @@ class App extends React.Component {
             <nav style={{ display: "flex", gap: 24, marginLeft: 14 }}>
               <button style={view === "dashboard" ? navOn : navBase} onClick={() => this.go("dashboard")}>Painel</button>
               <button style={view === "timeline" ? navOn : navBase} onClick={() => this.go("timeline")}>Cronograma</button>
+              <button style={(view === "activities" || view === "activity-detail") ? navOn : navBase} onClick={() => this.go("activities")}>Atividades</button>
               <button style={(view === "projects" || view === "project-detail") ? navOn : navBase} onClick={() => this.go("projects")}>Projetos</button>
             </nav>
             <div style={{ flex: 1 }} />
@@ -673,6 +725,9 @@ class App extends React.Component {
                                   )}
                                 </div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+                                  {this.state.activities.filter((a) => a.item_id === it.id && a.status === "corrigida" && a.grade).map((a) => (
+                                    <span key={a.id} title={"Atividade: " + (a.title || "")} onClick={(e) => { e.stopPropagation(); this.setState({ view: "activity-detail", selectedActivityId: a.id }); }} style={{ fontSize: 10, fontWeight: 700, color: ACT_STATUS.corrigida.color, background: ACT_STATUS.corrigida.color + "1f", border: "1px solid " + ACT_STATUS.corrigida.color + "44", padding: "2px 9px", borderRadius: 999, letterSpacing: ".04em", whiteSpace: "nowrap", cursor: "pointer" }}>★ {a.grade}</span>
+                                  ))}
                                   {it.tags.map((tag, i) => (<span key={i} style={{ fontSize: 10, color: "var(--muted,#587090)", background: "var(--surface-2,#0f1828)", padding: "2px 8px", borderRadius: 999, letterSpacing: ".04em" }}>{tag}</span>))}
                                   <span style={chip(it.status)}>{SP[it.status].label}</span>
                                 </div>
@@ -897,6 +952,108 @@ class App extends React.Component {
 
                 <div style={{ marginTop: 38, borderTop: "1px solid var(--border,#192840)", paddingTop: 20 }}>
                   <button className="ak-btn-sec" onClick={() => this.deleteProject(proj.id)} style={{ background: "none", border: "1px solid rgba(200,40,50,.28)", color: "rgba(240,100,110,.8)", padding: "8px 16px", borderRadius: 8, fontSize: 11, cursor: "pointer", letterSpacing: ".06em" }}>excluir projeto</button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ===== ATIVIDADES ===== */}
+          {view === "activities" && (
+            <div className="ak-fade">
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 10, letterSpacing: ".22em", textTransform: "uppercase", color: "var(--muted,#587090)" }}>exercícios & notas</div>
+                  <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontWeight: 600, fontSize: 42, margin: "6px 0 0", color: "var(--ink,#cddaef)" }}>Atividades</h1>
+                </div>
+                <button className="ak-btn" onClick={() => this.createActivity()} style={{ background: ACCENT, color: "#030810", border: "none", padding: "9px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: ".1em", textTransform: "uppercase" }}>+ Nova atividade</button>
+              </div>
+
+              {this.state.activities.length > 0 ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 14, marginTop: 32 }}>
+                  {this.state.activities.map((act, idx) => {
+                    const am = ACT_STATUS[act.status] || ACT_STATUS.pendente;
+                    const fo = act.item_id ? this.findItem(act.item_id) : null;
+                    const origem = fo ? fo.it : null;
+                    return (
+                      <div key={act.id} className={"ak-card ak-fade-" + Math.min(idx + 1, 4)} onClick={() => this.setState({ view: "activity-detail", selectedActivityId: act.id })} style={{ background: "var(--surface,#0b1120)", border: "1px solid var(--border,#192840)", borderRadius: 14, padding: 22, cursor: "pointer", display: "flex", flexDirection: "column", boxShadow: "inset 3px 0 0 " + am.color }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                          <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 20, fontWeight: 600, color: "var(--ink,#cddaef)", lineHeight: 1.2, flex: 1 }}>{act.title || "Sem título"}</div>
+                          {act.status === "corrigida" && act.grade ? (
+                            <span style={{ fontSize: 13, fontWeight: 700, color: am.color, background: am.color + "1f", border: "1px solid " + am.color + "44", padding: "3px 10px", borderRadius: 999, whiteSpace: "nowrap", flexShrink: 0 }}>★ {act.grade}</span>
+                          ) : (
+                            <span style={{ fontSize: 10, fontWeight: 700, color: am.color, background: am.color + "1a", padding: "3px 9px", borderRadius: 999, whiteSpace: "nowrap", letterSpacing: ".08em", textTransform: "uppercase", flexShrink: 0 }}>{am.label}</span>
+                          )}
+                        </div>
+                        {origem && <div style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--faint,#3a5068)", marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {origem.title}</div>}
+                        {act.topics.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                            {act.topics.map((t, i) => (<span key={i} style={{ fontSize: 10, color: "var(--muted,#587090)", background: "var(--surface-2,#0f1828)", border: "1px solid var(--border,#192840)", padding: "2px 8px", borderRadius: 999, letterSpacing: ".06em" }}>{t}</span>))}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 13, color: "var(--muted,#587090)", lineHeight: 1.6, marginTop: "auto", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{act.prompt || "Sem enunciado ainda."}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ border: "1px dashed var(--dashed,#1c3060)", borderRadius: 14, padding: 60, textAlign: "center", marginTop: 34 }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: "var(--ink,#cddaef)" }}>Nenhuma atividade ainda</div>
+                  <div style={{ color: "var(--muted,#587090)", margin: "10px 0 24px", fontSize: 13 }}>Conclua um item e peça ao seu agente para gerar uma atividade sobre os assuntos estudados.</div>
+                  <button className="ak-btn" onClick={() => this.createActivity()} style={{ background: ACCENT, color: "#030810", border: "none", padding: "10px 22px", borderRadius: 9, fontWeight: 700, cursor: "pointer", fontSize: 12, letterSpacing: ".1em", textTransform: "uppercase" }}>+ Criar atividade</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== ATIVIDADE DETALHE ===== */}
+          {view === "activity-detail" && (() => {
+            const act = this.findActivity(this.state.selectedActivityId);
+            if (!act) return null;
+            const am = ACT_STATUS[act.status] || ACT_STATUS.pendente;
+            const fo = act.item_id ? this.findItem(act.item_id) : null;
+            const origem = fo ? fo.it : null;
+            const fieldStyle = { border: "1px solid var(--border-strong,#1e3050)", borderRadius: 9, padding: "10px 14px", fontSize: 13, color: "var(--ink,#cddaef)", background: "var(--surface,#0b1120)", transition: "border-color .15s" };
+            const sectionTitle = { fontFamily: "'Cormorant Garamond',serif", fontSize: 20, fontWeight: 600, color: "var(--ink,#cddaef)", margin: "30px 0 10px" };
+            return (
+              <div className="ak-fade" style={{ maxWidth: 760 }}>
+                <button onClick={() => this.go("activities")} style={{ background: "none", border: "none", color: "var(--muted,#587090)", fontSize: 11, cursor: "pointer", padding: 0, letterSpacing: ".1em", textTransform: "uppercase" }}>← Atividades</button>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0 4px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: am.color, background: am.color + "1a", border: "1px solid " + am.color + "3a", padding: "4px 12px", borderRadius: 999, letterSpacing: ".08em", textTransform: "uppercase" }}>{am.label}</span>
+                  {act.status === "corrigida" && act.grade && <span style={{ fontSize: 13, fontWeight: 700, color: am.color, background: am.color + "1f", border: "1px solid " + am.color + "44", padding: "4px 12px", borderRadius: 999 }}>★ nota {act.grade}</span>}
+                  {origem && <span style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--faint,#3a5068)" }}>→ {origem.title}</span>}
+                </div>
+
+                <input value={act.title} onChange={(e) => this.onActivityField(act.id, "title", e.target.value)} onBlur={() => this.blurActivityField(act.id, "title")} placeholder="Título da atividade" style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 36, fontWeight: 600, color: "var(--ink,#cddaef)", border: "none", background: "none", width: "100%", padding: "10px 0 4px" }} />
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                  {act.topics.map((t, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--muted,#587090)", background: "var(--surface-2,#0f1828)", border: "1px solid var(--border,#192840)", padding: "3px 10px", borderRadius: 999, letterSpacing: ".06em" }}>{t}<button onClick={() => this.removeActivityTopic(act.id, i)} style={{ border: "none", background: "none", color: "var(--faint,#3a5068)", cursor: "pointer", padding: 0, fontSize: 10, lineHeight: 1 }}>✕</button></span>
+                  ))}
+                  <input value={this.state.newActivityTopic} onChange={(e) => this.setState({ newActivityTopic: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); this.addActivityTopic(act.id, this.state.newActivityTopic); } }} placeholder="+ assunto" style={{ border: "1px dashed var(--dashed,#1c3060)", borderRadius: 999, padding: "3px 12px", fontSize: 10, color: "var(--ink,#cddaef)", background: "none", width: 96, letterSpacing: ".06em" }} />
+                </div>
+
+                <div style={sectionTitle}>Enunciado</div>
+                <textarea value={act.prompt} onChange={(e) => this.onActivityField(act.id, "prompt", e.target.value)} onBlur={() => this.blurActivityField(act.id, "prompt")} placeholder="O agente escreve aqui as perguntas/exercícios. Peça no chat: 'gere uma atividade sobre…'." style={{ ...fieldStyle, width: "100%", minHeight: 140, lineHeight: 1.7 }} />
+
+                <div style={sectionTitle}>Suas respostas</div>
+                <textarea value={act.answers} onChange={(e) => this.onActivityField(act.id, "answers", e.target.value)} onBlur={() => this.blurActivityField(act.id, "answers")} placeholder="Responda aqui. Ao terminar, marque como entregue e peça ao agente para corrigir." style={{ ...fieldStyle, width: "100%", minHeight: 120, lineHeight: 1.7 }} />
+                <div style={{ marginTop: 10 }}>
+                  <button className="ak-btn" onClick={() => this.submitActivityAnswers(act.id)} style={{ background: ACCENT, color: "#030810", border: "none", padding: "9px 18px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: ".08em", textTransform: "uppercase" }}>marcar como entregue</button>
+                </div>
+
+                {(act.feedback || act.status === "corrigida") && (
+                  <div>
+                    <div style={sectionTitle}>Correção do agente</div>
+                    <div style={{ background: am.color + "12", border: "1px solid " + am.color + "33", borderRadius: 10, padding: 16, fontSize: 13, color: "var(--ink,#cddaef)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                      {act.grade && <div style={{ fontWeight: 700, color: am.color, marginBottom: 8 }}>Nota: {act.grade}</div>}
+                      {act.feedback || "Sem comentários ainda."}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 38, borderTop: "1px solid var(--border,#192840)", paddingTop: 20 }}>
+                  <button className="ak-btn-sec" onClick={() => this.deleteActivity(act.id)} style={{ background: "none", border: "1px solid rgba(200,40,50,.28)", color: "rgba(240,100,110,.8)", padding: "8px 16px", borderRadius: 8, fontSize: 11, cursor: "pointer", letterSpacing: ".06em" }}>excluir atividade</button>
                 </div>
               </div>
             );

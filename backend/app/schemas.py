@@ -54,3 +54,27 @@ class ProjetoUpdate(BaseModel):
     description: str | None = None
     tags: list[str] | None = None
     links: list[LinkDoc] | None = None
+
+
+class AtividadeCreate(BaseModel):
+    title: str = "Nova atividade"
+    prompt: str = ""  # enunciado gerado pelo agente
+    answers: str = ""  # respostas do usuário
+    feedback: str = ""
+    grade: str = ""  # nota
+    status: str = "pendente"  # pendente | entregue | corrigida
+    topics: list[str] = Field(default_factory=list)  # assuntos
+    item_id: str | None = None  # item de estudo de origem
+
+
+class AtividadeUpdate(BaseModel):
+    """Atualização parcial: só os campos enviados são alterados."""
+
+    title: str | None = None
+    prompt: str | None = None
+    answers: str | None = None
+    feedback: str | None = None
+    grade: str | None = None
+    status: str | None = None
+    topics: list[str] | None = None
+    item_id: str | None = None
