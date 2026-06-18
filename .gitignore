@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Banco de dados local
+*.db
+
+# Ferramentas locais (caminhos absolutos da máquina)
+.claude/
+
+# Sistema
+.DS_Store
+Thumbs.db

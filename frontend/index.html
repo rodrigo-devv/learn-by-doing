@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Akademía — diário de estudos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{background:var(--bg,#fbfcfe);font-family:'IBM Plex Mono','SFMono-Regular',Menlo,monospace;color:var(--ink,#16264a);-webkit-font-smoothing:antialiased;font-size:14px;transition:background .25s ease,color .25s ease;}
+  input,textarea,select,button{font-family:inherit;}
+  textarea{resize:vertical;}
+  input:focus,textarea:focus,select:focus{outline:none;}
+  ::placeholder{color:var(--faint,#9fb0cc);}
+  @keyframes tuiBlink{0%,49%{opacity:1;}50%,100%{opacity:0;}}
+  #loading{min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--faint,#8595b3);font-size:13px;}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div id="loading">carregando…</div></div>
+
+<script type="text/plain" id="akademia-src">
+const { useState, useEffect, useRef } = React;
+
+// ============ API (mesma origem do servidor FastAPI) ============
+const API = "";
+const TOKEN_KEY = "akademia-token";
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } };
+const setToken = (t) => { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} };
+
+// Erro lançado quando a API exige autenticação (token ausente/incorreto).
+class AuthError extends Error {}
+
+async function api(method, path, body) {
+  const headers = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(API + path, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) throw new AuthError("Não autorizado");
+  if (res.status === 204) return null;
+  if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);
+  return res.json();
+}
+
+// ============ constantes de tema/status (do design) ============
+const ORDER = ["todo", "doing", "done"];
+const STATUS_LIGHT = {
+  todo:  { label: "a fazer",      dot: "#9fb0cc", text: "#5b6b88", bg: "#eef2f8" },
+  doing: { label: "em andamento", dot: "#c08a2d", text: "#946420", bg: "#f7efdc" },
+  done:  { label: "concluído",    dot: "#2f7d5b", text: "#256048", bg: "#e4f1ea" },
+};
+const STATUS_DARK = {
+  todo:  { label: "a fazer",      dot: "#9fb0cc", text: "#aab8d6", bg: "rgba(159,176,204,.14)" },
+  doing: { label: "em andamento", dot: "#d2a04c", text: "#e3bd72", bg: "rgba(210,160,76,.16)" },
+  done:  { label: "concluído",    dot: "#4fa37c", text: "#74c79f", bg: "rgba(79,163,124,.16)" },
+};
+const THEME_VARS = {
+  light: {
+    "--bg": "#fbfcfe", "--header-bg": "rgba(251,252,254,.85)", "--surface": "#ffffff",
+    "--surface-2": "#eef3fb", "--border": "#e6edf7", "--border-strong": "#dbe4f2",
+    "--dashed": "#c5d3ea", "--ink": "#16264a", "--muted": "#5b6b88", "--faint": "#8595b3",
+    "--track": "#e8eef8", "--line": "#e1e9f6", "--st-todo": "#9fb0cc", "--st-doing": "#c08a2d", "--st-done": "#2f7d5b",
+  },
+  dark: {
+    "--bg": "#0a0f1d", "--header-bg": "rgba(10,15,29,.82)", "--surface": "#111827",
+    "--surface-2": "#1a2236", "--border": "#26314a", "--border-strong": "#303d59",
+    "--dashed": "#3a496a", "--ink": "#e7edf8", "--muted": "#9aa8c6", "--faint": "#6f7e9f",
+    "--track": "#1b2540", "--line": "#26314a", "--st-todo": "#9fb0cc", "--st-doing": "#d2a04c", "--st-done": "#4fa37c",
+  },
+};
+const ACCENT = "#1f5dba";
+const THEME_KEY = "akademia-theme";
+
+function applyTheme(theme) {
+  const t = theme === "dark" ? "dark" : "light";
+  const root = document.documentElement;
+  const vars = THEME_VARS[t];
+  for (const k in vars) root.style.setProperty(k, vars[k]);
+  root.style.setProperty("--accent", ACCENT);
+  root.style.background = vars["--bg"];
+  root.style.color = vars["--ink"];
+  root.style.colorScheme = t;
+  if (document.body) { document.body.style.background = vars["--bg"]; document.body.style.color = vars["--ink"]; }
+}
+
+function ytId(url) {
+  if (!url) return "";
+  const m = String(url).match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([\w-]{11})/);
+  if (m) return m[1];
+  const t = String(url).trim();
+  return /^[\w-]{11}$/.test(t) ? t : "";
+}
+
+// ============ animação de números estilo terminal (do design) ============
+function TuiNum({ text, duration = 680 }) {
+  const GLYPHS = "0123456789#%*/+=<>░▒▓";
+  const isCh = (c) => /[0-9A-Za-z]/.test(c);
+  const scramble = (txt) => txt.split("").map((c) => (isCh(c) ? GLYPHS[Math.floor(Math.random() * GLYPHS.length)] : c)).join("");
+  const target = String(text == null ? "" : text);
+  const [out, setOut] = useState(() => scramble(target));
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current === target) return;
+    ref.current = target;
+    const chars = target.split("");
+    const start = performance.now();
+    let raf;
+    const frame = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const reveal = Math.floor(t * chars.length + 1e-6);
+      setOut(chars.map((c, i) => (!isCh(c) || i < reveal || t >= 1 ? c : GLYPHS[Math.floor(Math.random() * GLYPHS.length)])).join(""));
+      if (t < 1) raf = requestAnimationFrame(frame);
+      else setOut(target);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+  return <span style={{ fontVariantNumeric: "tabular-nums", letterSpacing: ".02em" }}>{out}</span>;
+}
+
+// ============ componente principal ============
+class App extends React.Component {
+  constructor(props) {
+    super(props);
+    let theme = "light";
+    try { const t = localStorage.getItem(THEME_KEY); if (t === "dark" || t === "light") theme = t; } catch (e) {}
+    this.state = {
+      weeks: [], loading: true, error: null, needsToken: false, tokenInput: "",
+      view: "dashboard", selectedId: null, showAdd: false, addTitle: "", addWeekId: null, newTag: "", theme,
+    };
+  }
+
+  componentDidMount() {
+    applyTheme(this.state.theme);
+    this.load();
+  }
+
+  async load() {
+    try {
+      const data = await api("GET", "/api/state");
+      this.setState({ weeks: data.weeks || [], loading: false, needsToken: false });
+    } catch (e) {
+      if (e instanceof AuthError) {
+        this.setState({ loading: false, needsToken: true });
+      } else {
+        this.setState({ loading: false, error: "Não foi possível falar com a API. O backend está rodando?" });
+      }
+    }
+  }
+
+  submitToken() {
+    const t = (this.state.tokenInput || "").trim();
+    if (!t) return;
+    setToken(t);
+    this.setState({ needsToken: false, loading: true, tokenInput: "" }, () => this.load());
+  }
+
+  toggleTheme() {
+    this.setState((s) => ({ theme: s.theme === "dark" ? "light" : "dark" }), () => {
+      applyTheme(this.state.theme);
+      try { localStorage.setItem(THEME_KEY, this.state.theme); } catch (e) {}
+    });
+  }
+
+  findItem(id) {
+    for (const w of this.state.weeks) for (const it of w.items) if (it.id === id) return { it, w };
+    return null;
+  }
+
+  // ---- atualizações locais (otimistas) ----
+  setItemLocal(id, fn) {
+    this.setState((s) => ({ weeks: s.weeks.map((w) => ({ ...w, items: w.items.map((it) => (it.id === id ? fn(it) : it)) })) }));
+  }
+  updateItemLocal(id, patch) { this.setItemLocal(id, (it) => ({ ...it, ...patch })); }
+  setWeekLocal(id, patch) {
+    this.setState((s) => ({ weeks: s.weeks.map((w) => (w.id === id ? { ...w, ...patch } : w)) }));
+  }
+
+  // ---- persistência ----
+  persistItem(id, patch) { api("PATCH", `/api/itens/${id}`, patch).catch(() => {}); }
+
+  // ---- status ----
+  setStatus(id, st) { this.updateItemLocal(id, { status: st }); this.persistItem(id, { status: st }); }
+  cycleStatus(id) {
+    const f = this.findItem(id); if (!f) return;
+    const next = ORDER[(ORDER.indexOf(f.it.status) + 1) % 3];
+    this.setStatus(id, next);
+  }
+
+  // ---- campos de texto: muda local no onChange, grava no onBlur ----
+  onItemField(id, field, value) { this.updateItemLocal(id, { [field]: value }); }
+  blurItemField(id, field) { const f = this.findItem(id); if (f) this.persistItem(id, { [field]: f.it[field] }); }
+
+  // ---- tags ----
+  addTag(id, val) {
+    const v = String(val || "").trim(); if (!v) return;
+    const f = this.findItem(id); if (!f) return;
+    if (f.it.tags.includes(v)) { this.setState({ newTag: "" }); return; }
+    const tags = [...f.it.tags, v];
+    this.updateItemLocal(id, { tags });
+    this.setState({ newTag: "" });
+    this.persistItem(id, { tags });
+  }
+  removeTag(id, i) {
+    const f = this.findItem(id); if (!f) return;
+    const tags = f.it.tags.filter((_, k) => k !== i);
+    this.updateItemLocal(id, { tags });
+    this.persistItem(id, { tags });
+  }
+
+  // ---- links ----
+  addLink(id) {
+    const f = this.findItem(id); if (!f) return;
+    const links = [...f.it.links, { label: "", url: "" }];
+    this.updateItemLocal(id, { links }); this.persistItem(id, { links });
+  }
+  changeLink(id, i, patch) {
+    const f = this.findItem(id); if (!f) return;
+    const links = f.it.links.map((l, k) => (k === i ? { ...l, ...patch } : l));
+    this.updateItemLocal(id, { links });
+  }
+  blurLinks(id) { const f = this.findItem(id); if (f) this.persistItem(id, { links: f.it.links }); }
+  removeLink(id, i) {
+    const f = this.findItem(id); if (!f) return;
+    const links = f.it.links.filter((_, k) => k !== i);
+    this.updateItemLocal(id, { links }); this.persistItem(id, { links });
+  }
+
+  // ---- docs ----
+  addDoc(id) {
+    const f = this.findItem(id); if (!f) return;
+    const docs = [...f.it.docs, { label: "", url: "" }];
+    this.updateItemLocal(id, { docs }); this.persistItem(id, { docs });
+  }
+  changeDoc(id, i, patch) {
+    const f = this.findItem(id); if (!f) return;
+    const docs = f.it.docs.map((l, k) => (k === i ? { ...l, ...patch } : l));
+    this.updateItemLocal(id, { docs });
+  }
+  blurDocs(id) { const f = this.findItem(id); if (f) this.persistItem(id, { docs: f.it.docs }); }
+  removeDoc(id, i) {
+    const f = this.findItem(id); if (!f) return;
+    const docs = f.it.docs.filter((_, k) => k !== i);
+    this.updateItemLocal(id, { docs }); this.persistItem(id, { docs });
+  }
+
+  // ---- itens: criar/excluir ----
+  async addBlankItem(weekId) {
+    try {
+      const item = await api("POST", `/api/semanas/${weekId}/itens`, { title: "" });
+      this.setState((s) => ({
+        weeks: s.weeks.map((w) => (w.id === weekId ? { ...w, items: [...w.items, item] } : w)),
+        view: "detail", selectedId: item.id,
+      }));
+    } catch (e) {}
+  }
+  async deleteItem(id) {
+    try { await api("DELETE", `/api/itens/${id}`); } catch (e) {}
+    this.setState((s) => ({
+      weeks: s.weeks.map((w) => ({ ...w, items: w.items.filter((it) => it.id !== id) })),
+      view: "timeline", selectedId: null,
+    }));
+  }
+
+  // ---- semanas ----
+  async addWeek() {
+    try {
+      const week = await api("POST", "/api/semanas", { title: "Semana " + (this.state.weeks.length + 1) });
+      this.setState((s) => ({ weeks: [...s.weeks, week], view: "timeline" }));
+    } catch (e) {}
+  }
+  async removeWeek(id) {
+    try { await api("DELETE", `/api/semanas/${id}`); } catch (e) {}
+    this.setState((s) => ({ weeks: s.weeks.filter((w) => w.id !== id) }));
+  }
+  blurWeekTitle(id) { const w = this.state.weeks.find((x) => x.id === id); if (w) api("PATCH", `/api/semanas/${id}`, { title: w.title }).catch(() => {}); }
+
+  // ---- navegação ----
+  go(view) { this.setState({ view, selectedId: null }); }
+  open(id) { this.setState({ view: "detail", selectedId: id }); }
+  openAdd() { this.setState((s) => ({ showAdd: true, addTitle: "", addWeekId: s.weeks[0] ? s.weeks[0].id : "__new" })); }
+
+  async submitAdd() {
+    const title = (this.state.addTitle || "").trim() || "Novo item";
+    let weekId = this.state.addWeekId;
+    try {
+      if (weekId === "__new" || !weekId || !this.state.weeks.find((w) => w.id === weekId)) {
+        const week = await api("POST", "/api/semanas", { title: "Semana " + (this.state.weeks.length + 1) });
+        this.setState((s) => ({ weeks: [...s.weeks, week] }));
+        weekId = week.id;
+      }
+      const item = await api("POST", `/api/semanas/${weekId}/itens`, { title });
+      this.setState((s) => ({
+        weeks: s.weeks.map((w) => (w.id === weekId ? { ...w, items: [...w.items, item] } : w)),
+        showAdd: false, view: "detail", selectedId: item.id,
+      }));
+    } catch (e) { this.setState({ showAdd: false }); }
+  }
+
+  render() {
+    const SP = this.state.theme === "dark" ? STATUS_DARK : STATUS_LIGHT;
+    const dark = this.state.theme === "dark";
+
+    if (this.state.loading) return <div id="loading">carregando…</div>;
+
+    // ---- tela de acesso (quando a API exige token) ----
+    if (this.state.needsToken) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 18, padding: 32, width: "100%", maxWidth: 400, boxShadow: "0 8px 30px rgba(8,12,24,.12)" }}>
+            <div style={{ width: 44, height: 44, border: "1.5px solid var(--accent,#1f5dba)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent,#1f5dba)", fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 600, marginBottom: 16 }}>Α</div>
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: "var(--ink,#16264a)" }}>Acesso ao seu diário</div>
+            <div style={{ color: "var(--muted,#5b6b88)", margin: "8px 0 20px", fontSize: 13 }}>Informe o token de acesso para continuar.</div>
+            <input type="password" value={this.state.tokenInput} onChange={(e) => this.setState({ tokenInput: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") this.submitToken(); }} placeholder="token de acesso" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 10, padding: "11px 14px", fontSize: 14, color: "var(--ink,#16264a)", background: "var(--surface,#fff)", width: "100%" }} />
+            <button onClick={() => this.submitToken()} style={{ marginTop: 16, width: "100%", background: "var(--accent,#1f5dba)", color: "#fff", border: "none", padding: "11px 22px", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>entrar</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ---- estilos derivados ----
+    const dot = (st) => ({ width: "12px", height: "12px", borderRadius: "50%", background: SP[st].dot, display: "inline-block", flexShrink: 0 });
+    const chip = (st) => ({ fontSize: "11px", fontWeight: 600, color: SP[st].text, background: SP[st].bg, padding: "3px 11px", borderRadius: "999px", whiteSpace: "nowrap" });
+    const toggle = (st) => ({ width: "22px", height: "22px", borderRadius: "50%", border: "2px solid " + SP[st].dot, background: st === "done" ? SP.done.dot : "var(--surface,#fff)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "12px", flexShrink: 0, padding: 0, lineHeight: 1 });
+    const titleStyle = (st) => ({ fontWeight: 500, fontSize: "14px", color: st === "done" ? "var(--faint,#9aa8c4)" : "var(--ink,#16264a)", textDecoration: st === "done" ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+
+    // ---- estatísticas ----
+    const all = [];
+    this.state.weeks.forEach((w) => w.items.forEach((it) => all.push({ it, w })));
+    const total = all.length;
+    const done = all.filter((x) => x.it.status === "done").length;
+    const doing = all.filter((x) => x.it.status === "doing").length;
+    const todo = total - done - doing;
+    const percent = total ? Math.round((done / total) * 100) : 0;
+    const ringCirc = 2 * Math.PI * 56;
+    const ringOffset = ringCirc * (1 - percent / 100);
+
+    const fmt = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    let today = fmt.format(new Date());
+    today = today.charAt(0).toUpperCase() + today.slice(1);
+    const hr = new Date().getHours();
+    const greeting = hr < 12 ? "Bom dia" : hr < 18 ? "Boa tarde" : "Boa noite";
+
+    const navBase = { padding: "6px 2px", fontSize: "13px", fontWeight: 600, letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer", background: "none", border: "none", borderBottom: "2px solid transparent", color: "var(--muted,#7d8aa6)" };
+    const navOn = { ...navBase, color: "var(--accent,#1f5dba)", borderBottom: "2px solid var(--accent,#1f5dba)" };
+
+    const view = this.state.view;
+    const continueItems = all.filter((x) => x.it.status === "doing");
+
+    return (
+      <div style={{ minHeight: "100vh" }}>
+        {/* ===== HEADER ===== */}
+        <header style={{ position: "sticky", top: 0, zIndex: 20, background: "var(--header-bg,rgba(251,252,254,.85))", backdropFilter: "blur(12px)", borderBottom: "1px solid var(--border-strong,#dbe4f2)" }}>
+          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "14px 28px", display: "flex", alignItems: "center", gap: 26 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => this.go("dashboard")}>
+              <div style={{ width: 38, height: 38, border: "1.5px solid var(--accent,#1f5dba)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent,#1f5dba)", fontFamily: "'Cormorant Garamond',serif", fontSize: 25, fontWeight: 600, lineHeight: 1 }}>Α</div>
+              <div style={{ lineHeight: 1.1 }}>
+                <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 600, color: "var(--ink,#16264a)", letterSpacing: ".01em" }}>Akademía</div>
+                <div style={{ fontSize: 9, letterSpacing: ".22em", textTransform: "uppercase", color: "var(--faint,#8595b3)", marginTop: 2 }}>diário de estudos</div>
+              </div>
+            </div>
+            <nav style={{ display: "flex", gap: 22, marginLeft: 14 }}>
+              <button style={view === "dashboard" ? navOn : navBase} onClick={() => this.go("dashboard")}>painel</button>
+              <button style={view === "timeline" ? navOn : navBase} onClick={() => this.go("timeline")}>cronograma</button>
+            </nav>
+            <div style={{ flex: 1 }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button onClick={() => this.toggleTheme()} title={dark ? "Mudar para tema claro" : "Mudar para tema escuro"} style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface,#fff)", border: "1px solid var(--border-strong,#dbe4f2)", color: "var(--ink,#16264a)", borderRadius: 9, fontSize: 16, cursor: "pointer", lineHeight: 1 }}>{dark ? "☀" : "☾"}</button>
+              <button onClick={() => this.openAdd()} style={{ display: "flex", alignItems: "center", gap: 7, background: "var(--accent,#1f5dba)", color: "#fff", border: "none", padding: "9px 17px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 2px 10px rgba(31,93,186,.25)" }}>＋ novo item</button>
+            </div>
+          </div>
+        </header>
+
+        <main style={{ maxWidth: 1000, margin: "0 auto", padding: "38px 28px 90px" }}>
+          {this.state.error && (
+            <div style={{ background: "var(--surface,#fff)", border: "1px solid #c5494f55", color: "#c0494f", borderRadius: 12, padding: 16, marginBottom: 20, fontSize: 13 }}>{this.state.error}</div>
+          )}
+
+          {/* ===== PAINEL ===== */}
+          {view === "dashboard" && (
+            <div>
+              <div style={{ fontSize: 11, letterSpacing: ".18em", textTransform: "uppercase", color: "var(--faint,#8595b3)" }}>{today}</div>
+              <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontWeight: 600, fontSize: 42, lineHeight: 1.08, margin: "8px 0 0", color: "var(--ink,#16264a)" }}>{greeting} — hora de estudar.</h1>
+
+              {total > 0 ? (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 18, marginTop: 30 }}>
+                    <div style={{ background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 16, padding: 24, boxShadow: "0 1px 2px rgba(22,38,74,.04)", display: "flex", alignItems: "center", gap: 20 }}>
+                      <div style={{ position: "relative", width: 118, height: 118, flexShrink: 0 }}>
+                        <svg width="118" height="118" viewBox="0 0 132 132">
+                          <circle cx="66" cy="66" r="56" fill="none" style={{ stroke: "var(--track,#e8eef8)" }} strokeWidth="12" />
+                          <circle cx="66" cy="66" r="56" fill="none" stroke={ACCENT} strokeWidth="12" strokeLinecap="round" strokeDasharray={ringCirc} strokeDashoffset={ringOffset} transform="rotate(-90 66 66)" />
+                        </svg>
+                        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'IBM Plex Mono',monospace", fontSize: 26, fontWeight: 600, color: "var(--ink,#16264a)", letterSpacing: ".01em" }}><TuiNum text={String(percent)} />%</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--faint,#8595b3)" }}>progresso</div>
+                        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 28, fontWeight: 600, color: "var(--ink,#16264a)", lineHeight: 1.1, marginTop: 4, letterSpacing: ".01em", display: "flex", alignItems: "center" }}><TuiNum text={String(done)} /> / <TuiNum text={String(total)} /><span style={{ display: "inline-block", width: 9, height: 19, background: "var(--accent,#1f5dba)", marginLeft: 7, animation: "tuiBlink 1.05s steps(1) infinite" }} /></div>
+                        <div style={{ fontSize: 12, color: "var(--muted,#5b6b88)" }}>itens concluídos</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
+                      {[["a fazer", "todo", todo], ["em andamento", "doing", doing], ["concluídos", "done", done]].map(([label, st, val]) => (
+                        <div key={st} style={{ background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(22,38,74,.04)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 11, height: 11, borderRadius: "50%", background: SP[st].dot }} /><span style={{ fontSize: 12, color: "var(--muted,#5b6b88)" }}>{label}</span></div>
+                          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 34, fontWeight: 700, color: "var(--ink,#16264a)", lineHeight: 1, marginTop: 12, letterSpacing: ".01em" }}><TuiNum text={String(val)} /></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: "var(--ink,#16264a)", margin: "38px 0 14px" }}>Progresso por semana</h2>
+                  <div style={{ background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 16, padding: 24, boxShadow: "0 1px 2px rgba(22,38,74,.04)", display: "flex", flexDirection: "column", gap: 20 }}>
+                    {this.state.weeks.map((w) => {
+                      const d = w.items.filter((i) => i.status === "done").length;
+                      const pc = w.items.length ? Math.round((d / w.items.length) * 100) : 0;
+                      return (
+                        <div key={w.id}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                            <span style={{ fontWeight: 500, fontSize: 14, color: "var(--ink,#16264a)" }}>{w.title}</span>
+                            <span style={{ fontSize: 12, color: "var(--faint,#8595b3)" }}>{d}/{w.items.length}</span>
+                          </div>
+                          <div style={{ height: 8, background: "var(--surface-2,#eef3fb)", borderRadius: 999, overflow: "hidden" }}><div style={{ height: "100%", width: pc + "%", background: "var(--accent,#1f5dba)", borderRadius: 999, transition: "width .4s ease" }} /></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {continueItems.length > 0 && (
+                    <div>
+                      <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: "var(--ink,#16264a)", margin: "38px 0 14px" }}>Continuar de onde parou</h2>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 14 }}>
+                        {continueItems.map(({ it, w }) => (
+                          <div key={it.id} onClick={() => this.open(it.id)} style={{ background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 14, padding: 18, boxShadow: "0 1px 2px rgba(22,38,74,.04)", cursor: "pointer" }}>
+                            <div style={{ fontSize: 10, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--faint,#8595b3)" }}>{w.title}</div>
+                            <div style={{ fontWeight: 500, fontSize: 15, color: "var(--ink,#16264a)", margin: "6px 0 12px" }}>{it.title || "Sem título"}</div>
+                            <span style={chip(it.status)}>{SP[it.status].label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginTop: 40, background: "var(--surface,#fff)", border: "1px dashed var(--dashed,#c5d3ea)", borderRadius: 18, padding: 54, textAlign: "center" }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 600, color: "var(--ink,#16264a)" }}>Comece seu diário</div>
+                  <div style={{ color: "var(--muted,#5b6b88)", margin: "8px 0 22px", fontSize: 13 }}>Adicione seu primeiro item de estudo e organize tudo numa linha do tempo.</div>
+                  <button onClick={() => this.openAdd()} style={{ background: "var(--accent,#1f5dba)", color: "#fff", border: "none", padding: "11px 22px", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>＋ adicionar item</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== CRONOGRAMA ===== */}
+          {view === "timeline" && (
+            <div>
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, letterSpacing: ".18em", textTransform: "uppercase", color: "var(--faint,#8595b3)" }}>linha do tempo</div>
+                  <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontWeight: 600, fontSize: 40, margin: "6px 0 0", color: "var(--ink,#16264a)" }}>Cronograma</h1>
+                </div>
+                <button onClick={() => this.addWeek()} style={{ background: "var(--surface,#fff)", border: "1px solid var(--dashed,#c5d3ea)", color: "var(--accent,#1f5dba)", padding: "9px 16px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>＋ semana</button>
+              </div>
+
+              {this.state.weeks.length > 0 ? (
+                <div style={{ position: "relative", marginTop: 28 }}>
+                  <div style={{ position: "absolute", left: 13, top: 6, bottom: 30, width: 2, background: "var(--line,#e1e9f6)" }} />
+                  {this.state.weeks.map((w) => {
+                    const d = w.items.filter((i) => i.status === "done").length;
+                    return (
+                      <div key={w.id} style={{ position: "relative", paddingLeft: 48, marginBottom: 36 }}>
+                        <div style={{ position: "absolute", left: 5, top: 5, width: 16, height: 16, borderRadius: "50%", background: "var(--surface,#fff)", border: "3px solid var(--accent,#1f5dba)" }} />
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                          <input value={w.title} onChange={(e) => this.setWeekLocal(w.id, { title: e.target.value })} onBlur={() => this.blurWeekTitle(w.id)} style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 25, fontWeight: 600, color: "var(--ink,#16264a)", border: "none", background: "none", padding: "2px 6px", borderRadius: 7, flex: 1, minWidth: 0 }} />
+                          <span style={{ fontSize: 11, color: "var(--faint,#8595b3)", background: "var(--surface-2,#eef3fb)", padding: "4px 11px", borderRadius: 999, whiteSpace: "nowrap" }}>{d}/{w.items.length}</span>
+                          <button onClick={() => this.removeWeek(w.id)} title="Remover semana" style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border,#e6edf7)", background: "var(--surface,#fff)", color: "var(--faint,#a9b6cf)", cursor: "pointer", fontSize: 13, flexShrink: 0 }}>✕</button>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                          {w.items.map((it) => {
+                            const vid = ytId(it.video);
+                            const hasMeta = vid || it.links.length > 0 || it.docs.length > 0;
+                            return (
+                              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 14, background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 12, padding: "13px 16px", boxShadow: "0 1px 2px rgba(22,38,74,.04)" }}>
+                                <button onClick={() => this.cycleStatus(it.id)} title="Mudar status" style={toggle(it.status)}>{it.status === "done" ? "✓" : ""}</button>
+                                <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => this.open(it.id)}>
+                                  <div style={titleStyle(it.status)}>{it.title || "Sem título"}</div>
+                                  {hasMeta && (
+                                    <div style={{ display: "flex", gap: 14, marginTop: 5, fontSize: 11, color: "var(--faint,#8595b3)" }}>
+                                      {vid && <span>▷ vídeo</span>}
+                                      {it.links.length > 0 && <span>↗ {it.links.length} links</span>}
+                                      {it.docs.length > 0 && <span>▭ {it.docs.length} docs</span>}
+                                    </div>
+                                  )}
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                                  {it.tags.map((tag, i) => (<span key={i} style={{ fontSize: 11, color: "var(--muted,#5b6b88)", background: "var(--surface-2,#eef3fb)", padding: "3px 9px", borderRadius: 999 }}>{tag}</span>))}
+                                  <span style={chip(it.status)}>{SP[it.status].label}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <button onClick={() => this.addBlankItem(w.id)} style={{ textAlign: "left", background: "none", border: "1px dashed var(--dashed,#c5d3ea)", borderRadius: 12, padding: "11px 16px", color: "var(--muted,#5b6b88)", fontSize: 13, cursor: "pointer" }}>＋ adicionar item</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ background: "var(--surface,#fff)", border: "1px dashed var(--dashed,#c5d3ea)", borderRadius: 18, padding: 48, textAlign: "center" }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 600, color: "var(--ink,#16264a)" }}>Nenhuma semana ainda</div>
+                  <div style={{ color: "var(--muted,#5b6b88)", margin: "8px 0 20px", fontSize: 13 }}>Crie sua primeira semana para começar o cronograma.</div>
+                  <button onClick={() => this.addWeek()} style={{ background: "var(--accent,#1f5dba)", color: "#fff", border: "none", padding: "10px 20px", borderRadius: 10, fontWeight: 600, cursor: "pointer" }}>＋ criar semana</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ===== DETALHE ===== */}
+          {view === "detail" && (() => {
+            const f = this.findItem(this.state.selectedId);
+            if (!f) return null;
+            const it = f.it;
+            const vid = ytId(it.video);
+            const segActive = (st) => ({ display: "flex", alignItems: "center", gap: 8, padding: "8px 15px", borderRadius: 999, border: "1px solid " + SP[st].dot, background: SP[st].bg, color: SP[st].text, fontWeight: 600, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" });
+            const segIdle = { display: "flex", alignItems: "center", gap: 8, padding: "8px 15px", borderRadius: 999, border: "1px solid var(--border-strong,#dbe4f2)", background: "var(--surface,#fff)", color: "var(--muted,#7d8aa6)", fontWeight: 500, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" };
+            return (
+              <div style={{ maxWidth: 760 }}>
+                <button onClick={() => this.go("timeline")} style={{ background: "none", border: "none", color: "var(--muted,#5b6b88)", fontSize: 13, cursor: "pointer", padding: 0 }}>← {f.w.title}</button>
+
+                <div style={{ display: "flex", gap: 9, margin: "18px 0 16px", flexWrap: "wrap" }}>
+                  {ORDER.map((st) => (
+                    <button key={st} style={it.status === st ? segActive(st) : segIdle} onClick={() => this.setStatus(it.id, st)}><span style={dot(st)} />{SP[st].label}</button>
+                  ))}
+                </div>
+
+                <input value={it.title} onChange={(e) => this.onItemField(it.id, "title", e.target.value)} onBlur={() => this.blurItemField(it.id, "title")} placeholder="Título do item" style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 34, fontWeight: 600, color: "var(--ink,#16264a)", border: "none", background: "none", width: "100%", padding: "2px 0" }} />
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                  {it.tags.map((tag, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted,#5b6b88)", background: "var(--surface-2,#eef3fb)", padding: "4px 10px", borderRadius: 999 }}>{tag}<button onClick={() => this.removeTag(it.id, i)} style={{ border: "none", background: "none", color: "var(--faint,#a9b6cf)", cursor: "pointer", padding: 0, fontSize: 11, lineHeight: 1 }}>✕</button></span>
+                  ))}
+                  <input value={this.state.newTag} onChange={(e) => this.setState({ newTag: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); this.addTag(it.id, this.state.newTag); } }} placeholder="+ tag" style={{ border: "1px dashed var(--dashed,#c5d3ea)", borderRadius: 999, padding: "4px 12px", fontSize: 12, color: "var(--ink,#16264a)", background: "none", width: 96 }} />
+                </div>
+
+                <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 600, color: "var(--ink,#16264a)", margin: "30px 0 12px" }}>Vídeo</div>
+                {vid && (
+                  <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 14, overflow: "hidden", background: "#0b1220", marginBottom: 12 }}>
+                    <iframe src={"https://www.youtube.com/embed/" + vid} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+                  </div>
+                )}
+                <input value={it.video} onChange={(e) => this.onItemField(it.id, "video", e.target.value)} onBlur={() => this.blurItemField(it.id, "video")} placeholder="Cole o link do YouTube (youtube.com/watch?v=… ou youtu.be/…)" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 10, padding: "11px 14px", fontSize: 13, color: "var(--ink,#16264a)", background: "var(--surface,#fff)", width: "100%" }} />
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "30px 0 12px" }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 600, color: "var(--ink,#16264a)" }}>Links</div>
+                  <button onClick={() => this.addLink(it.id)} style={{ background: "var(--surface-2,#eef3fb)", border: "none", color: "var(--accent,#1f5dba)", padding: "6px 13px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>＋ adicionar</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {it.links.map((link, i) => (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input value={link.label} onChange={(e) => this.changeLink(it.id, i, { label: e.target.value })} onBlur={() => this.blurLinks(it.id)} placeholder="Título" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 9, padding: "9px 12px", fontSize: 13, background: "var(--surface,#fff)", color: "var(--ink,#16264a)", width: "38%" }} />
+                      <input value={link.url} onChange={(e) => this.changeLink(it.id, i, { url: e.target.value })} onBlur={() => this.blurLinks(it.id)} placeholder="https://…" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 9, padding: "9px 12px", fontSize: 13, background: "var(--surface,#fff)", color: "var(--ink,#16264a)", flex: 1, minWidth: 0 }} />
+                      <a href={link.url} target="_blank" rel="noopener" style={{ textDecoration: "none", color: "var(--accent,#1f5dba)", fontSize: 15, padding: 6 }}>↗</a>
+                      <button onClick={() => this.removeLink(it.id, i)} style={{ border: "none", background: "none", color: "var(--faint,#a9b6cf)", cursor: "pointer", fontSize: 13, padding: 6 }}>✕</button>
+                    </div>
+                  ))}
+                  {it.links.length === 0 && <div style={{ fontSize: 13, color: "var(--faint,#9fb0cc)" }}>Nenhum link ainda.</div>}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "30px 0 12px" }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 600, color: "var(--ink,#16264a)" }}>Documentos</div>
+                  <button onClick={() => this.addDoc(it.id)} style={{ background: "var(--surface-2,#eef3fb)", border: "none", color: "var(--accent,#1f5dba)", padding: "6px 13px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>＋ adicionar</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {it.docs.map((doc, i) => (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input value={doc.label} onChange={(e) => this.changeDoc(it.id, i, { label: e.target.value })} onBlur={() => this.blurDocs(it.id)} placeholder="Nome do documento" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 9, padding: "9px 12px", fontSize: 13, background: "var(--surface,#fff)", color: "var(--ink,#16264a)", width: "38%" }} />
+                      <input value={doc.url} onChange={(e) => this.changeDoc(it.id, i, { url: e.target.value })} onBlur={() => this.blurDocs(it.id)} placeholder="Link / URL do PDF" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 9, padding: "9px 12px", fontSize: 13, background: "var(--surface,#fff)", color: "var(--ink,#16264a)", flex: 1, minWidth: 0 }} />
+                      <a href={doc.url} target="_blank" rel="noopener" style={{ textDecoration: "none", color: "var(--accent,#1f5dba)", fontSize: 15, padding: 6 }}>↗</a>
+                      <button onClick={() => this.removeDoc(it.id, i)} style={{ border: "none", background: "none", color: "var(--faint,#a9b6cf)", cursor: "pointer", fontSize: 13, padding: 6 }}>✕</button>
+                    </div>
+                  ))}
+                  {it.docs.length === 0 && <div style={{ fontSize: 13, color: "var(--faint,#9fb0cc)" }}>Nenhum documento ainda.</div>}
+                </div>
+
+                <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 600, color: "var(--ink,#16264a)", margin: "30px 0 12px" }}>Anotações</div>
+                <textarea value={it.notes} onChange={(e) => this.onItemField(it.id, "notes", e.target.value)} onBlur={() => this.blurItemField(it.id, "notes")} placeholder="Resumo, dúvidas, pontos-chave…" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 12, padding: "13px 15px", fontSize: 13, lineHeight: 1.7, color: "var(--ink,#16264a)", background: "var(--surface,#fff)", width: "100%", minHeight: 130 }} />
+
+                <div style={{ marginTop: 34, borderTop: "1px solid var(--surface-2,#eef3fb)", paddingTop: 18 }}>
+                  <button onClick={() => this.deleteItem(it.id)} style={{ background: "none", border: "1px solid #c5494f55", color: "#c0494f", padding: "9px 16px", borderRadius: 9, fontSize: 13, cursor: "pointer" }}>excluir item</button>
+                </div>
+              </div>
+            );
+          })()}
+        </main>
+
+        {/* ===== MODAL NOVO ITEM ===== */}
+        {this.state.showAdd && (
+          <div onClick={() => this.setState({ showAdd: false })} style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(8,12,24,.5)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface,#fff)", border: "1px solid var(--border,#e6edf7)", borderRadius: 18, padding: 28, width: "100%", maxWidth: 440, boxShadow: "0 24px 60px rgba(8,12,24,.4)" }}>
+              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 27, fontWeight: 600, color: "var(--ink,#16264a)" }}>Novo item de estudo</div>
+              <div style={{ fontSize: 10, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--faint,#8595b3)", margin: "18px 0 7px" }}>título</div>
+              <input value={this.state.addTitle} onChange={(e) => this.setState({ addTitle: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); this.submitAdd(); } }} placeholder="O que você vai estudar?" style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 10, padding: "11px 14px", fontSize: 14, color: "var(--ink,#16264a)", background: "var(--surface,#fff)", width: "100%" }} />
+              <div style={{ fontSize: 10, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--faint,#8595b3)", margin: "18px 0 7px" }}>semana</div>
+              <select value={this.state.addWeekId || "__new"} onChange={(e) => this.setState({ addWeekId: e.target.value })} style={{ border: "1px solid var(--border-strong,#dbe4f2)", borderRadius: 10, padding: "11px 14px", fontSize: 14, color: "var(--ink,#16264a)", background: "var(--surface,#fff)", width: "100%" }}>
+                {this.state.weeks.map((w) => (<option key={w.id} value={w.id}>{w.title}</option>))}
+                <option value="__new">＋ Nova semana</option>
+              </select>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24 }}>
+                <button onClick={() => this.setState({ showAdd: false })} style={{ background: "var(--surface,#fff)", border: "1px solid var(--border-strong,#dbe4f2)", color: "var(--muted,#5b6b88)", padding: "9px 18px", borderRadius: 9, fontSize: 13, cursor: "pointer" }}>cancelar</button>
+                <button onClick={() => this.submitAdd()} style={{ background: "var(--accent,#1f5dba)", color: "#fff", border: "none", padding: "9px 20px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>adicionar</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+<script>
+  // Compila o JSX com runtime "classic" (React.createElement) e executa como
+  // script clássico. O runtime "automatic" emitiria `import ... from
+  // "react/jsx-runtime"`, que falha fora de um módulo ES.
+  (function () {
+    var src = document.getElementById("akademia-src").textContent;
+    var out = Babel.transform(src, { presets: [["react", { runtime: "classic" }]] }).code;
+    (0, eval)(out);
+  })();
+</script>
+</body>
+</html>

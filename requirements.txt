@@ -1,0 +1,7 @@
+# Dependências do serviço web (backend + site) para deploy no Railway.
+# Mantenha em sincronia com backend/requirements.txt.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+pydantic==2.10.4
+psycopg[binary]==3.2.3
