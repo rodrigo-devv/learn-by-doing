@@ -10,8 +10,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # learning-by-doing/akademia.db (default). Sobrescrevível por env var.
+# Usamos "or" (não o default do get) para que uma DATABASE_URL VAZIA — comum
+# quando a referência ${{Postgres.DATABASE_URL}} não resolve no Railway —
+# caia no SQLite em vez de quebrar o boot com "Could not parse URL from ''".
 _DB_PATH = Path(__file__).resolve().parents[2] / "akademia.db"
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{_DB_PATH}")
+DATABASE_URL = os.environ.get("DATABASE_URL") or f"sqlite:///{_DB_PATH}"
 
 # O Railway (e outros) fornecem a URL como "postgres://" ou "postgresql://".
 # O SQLAlchemy precisa do driver explícito: usamos psycopg (v3).
